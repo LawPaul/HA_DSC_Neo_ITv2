@@ -167,7 +167,7 @@ class ITv2Connection:
                     if isinstance(ev, BytesToSend):
                         continue
                     await self._events.put(ev)
-                    if isinstance(ev, (Closed, Failed)):
+                    if isinstance(ev, Closed | Failed):
                         terminal = True
                 if terminal:
                     break
