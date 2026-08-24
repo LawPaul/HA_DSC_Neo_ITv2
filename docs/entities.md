@@ -167,8 +167,9 @@ for that partition + zone.
 
 ### Command outputs
 
-One per command output that has a matching programmed PGM on the enabled
-partition (`[*][7][1..4]`).
+With installer-code data, one per command output that has a matching programmed
+PGM on the enabled partition (`[*][7][1..4]`). Without an installer code, all
+four generic controls are exposed.
 
 | Property | Value |
 |---|---|
@@ -185,9 +186,9 @@ partition.
 - Multiple matches -> generic `Command output k`.
 - No matches -> no entity is created for that output.
 
-This filtering requires the installer-code panel read. Without PGM programming
-data, the integration cannot safely infer which command outputs exist; the
-manual `dsc_neo_itv2.command_output` service remains available.
+This filtering requires the installer-code panel read. Without an installer
+code, all four generic command-output buttons remain enabled so users can still
+trigger a known output manually.
 
 Icon: `mdi:smoke-detector-variant` for Sensor Reset (PGM type 103), otherwise
 `mdi:electric-switch`.

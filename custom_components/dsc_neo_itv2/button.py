@@ -5,12 +5,10 @@ Buttons exposed:
   * **Reload panel config** (config category): re-read installer-mode
     sections so HA learns about zone/partition/label/PGM changes made
     at the keypad.
-  * **Available command outputs** (per partition): fires the matching
-    keypad ``[*][7][N]`` action. The button is labelled with the human-readable
-    PGM type name pulled from the panel (e.g. ``Sensor reset``,
-    ``Courtesy pulse``) when the panel-config read has captured PGM
-    types ([009]) and partition assignments ([007]). Outputs with no
-    matching programmed PGM are not created.
+  * **Command outputs** (per partition): fires the matching keypad
+    ``[*][7][N]`` action. With installer-derived PGM programming, only
+    available outputs are created and labelled from sections [009]/[007].
+    Without an installer code, all four generic controls remain available.
 
 All buttons live under the single panel device so the UI keeps them
 together.
@@ -59,11 +57,22 @@ async def async_setup_entry(
     @callback
     def _add_for_known_partitions() -> None:
         new: list[ButtonEntity] = []
-        for partition_no in sorted(coordinator.partitions):
+        partition_numbers = set(coordinator.partitions)
+        partition_numbers.update(
+            partition
+            for partition, enabled in coordinator.partition_enabled.items()
+            if enabled
+        )
+        if not partition_numbers and not coordinator.installer_code:
+            partition_numbers.add(1)
+        for partition_no in sorted(partition_numbers):
             if not coordinator.is_partition_enabled(partition_no):
                 continue
             for output_no in _COMMAND_OUTPUTS:
-                if not coordinator.command_output_pgms(partition_no, output_no):
+                if (
+                    coordinator.installer_code
+                    and not coordinator.command_output_pgms(partition_no, output_no)
+                ):
                     continue
                 key = ("command_output", partition_no, output_no)
                 if key not in added:
@@ -186,8 +195,9 @@ class DscNeoCommandOutputButton(_PartitionedCommandOutputButton):
     output slot (via ``coordinator.pgm_types`` from section [009] and
     ``coordinator.pgm_partition_assignment`` from section [007]) and
     uses the PGM type name from the installer manual to label the
-    button. Slots without a matching programmed PGM are filtered by the
-    platform and no entity is created for them.
+    button. With an installer code, slots without a matching programmed
+    PGM are filtered by the platform. Without one, the four generic controls
+    are exposed because PGM availability cannot be inspected.
     """
 
     _attr_entity_category = EntityCategory.CONFIG
@@ -231,8 +241,7 @@ class DscNeoCommandOutputButton(_PartitionedCommandOutputButton):
                 self._attr_translation_key = "command_output"
             self._matches = matches
         else:
-            # Defensive fallback for direct construction. The platform never
-            # adds this entity when no programmed PGM matches the slot.
+            # Generic fallback used when no installer code is configured.
             base = f"Command output {output_number}"
             self._attr_translation_key = "command_output"
             self._matches = []

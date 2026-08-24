@@ -1170,8 +1170,11 @@ class DscNeoCoordinator:
                     partition_no in self.partition_enabled
                     and not self.partition_enabled[partition_no]
                 )
-                output_unavailable = bool(self.pgm_types) and not self.command_output_pgms(
-                    partition_no, command_output_no,
+                output_unavailable = (
+                    bool(self.installer_code and self.pgm_types)
+                    and not self.command_output_pgms(
+                        partition_no, command_output_no,
+                    )
                 )
                 if partition_disabled or output_unavailable:
                     registry.async_remove(ent.entity_id)

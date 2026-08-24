@@ -124,7 +124,7 @@ automations, dashboards and scripts like any other Home Assistant entity.
 | `sensor` | Open-zone count, bypassed-zone count | partition |
 | `sensor` | Fire status, burglary status, system status (enums) | partition |
 | `switch` | Zone bypass (bypassable zones only) | zone |
-| `button` | Available command outputs, discovered and labelled from PGM programming | partition |
+| `button` | Command outputs, filtered and labelled from PGM programming when available | partition |
 | `button` | Reload panel config | panel |
 
 Full reference: [docs/entities.md](docs/entities.md).

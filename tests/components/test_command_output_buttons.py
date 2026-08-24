@@ -17,7 +17,9 @@ from custom_components.dsc_neo_itv2.dsc_itv2.session import ConnectionSettings
 
 
 def _coordinator(
-    hass: HomeAssistant, entry_id: str = "test-entry",
+    hass: HomeAssistant,
+    entry_id: str = "test-entry",
+    installer_code: str | None = "5555",
 ) -> DscNeoCoordinator:
     coordinator = DscNeoCoordinator(
         hass=hass,
@@ -25,6 +27,7 @@ def _coordinator(
         settings=ConnectionSettings(),
         host="0.0.0.0",
         port=3072,
+        installer_code=installer_code,
     )
     coordinator.partition_enabled = {1: True, 2: True}
     coordinator.has_panel_config = True
@@ -73,6 +76,42 @@ async def test_no_command_output_buttons_are_guessed_without_pgm_data(
     assert not any(
         isinstance(entity, DscNeoCommandOutputButton) for entity in added
     )
+
+
+async def test_all_four_outputs_remain_enabled_without_installer_code(
+    hass: HomeAssistant,
+):
+    coordinator = _coordinator(hass, installer_code=None)
+    coordinator.partitions.clear()
+    coordinator.partition_enabled.clear()
+    coordinator.has_panel_config = False
+    added = []
+
+    await async_setup_entry(hass, _entry(coordinator), added.extend)
+
+    outputs = [entity for entity in added if isinstance(entity, DscNeoCommandOutputButton)]
+    assert {entity._attr_unique_id for entity in outputs} == {
+        f"test-entry_partition_1_command_output_{output}"
+        for output in range(1, 5)
+    }
+    assert all(entity.entity_registry_enabled_default for entity in outputs)
+
+
+async def test_enabled_partition_can_add_outputs_before_live_status(
+    hass: HomeAssistant,
+):
+    coordinator = _coordinator(hass)
+    coordinator.partitions.clear()
+    coordinator.pgm_types = {3: 124}
+    coordinator.pgm_partition_assignment = {3: 2}
+    added = []
+
+    await async_setup_entry(hass, _entry(coordinator), added.extend)
+
+    outputs = [entity for entity in added if isinstance(entity, DscNeoCommandOutputButton)]
+    assert [entity._attr_unique_id for entity in outputs] == [
+        "test-entry_partition_2_command_output_4",
+    ]
 
 
 def test_unassigned_pgm_defaults_to_partition_one(hass: HomeAssistant):
