@@ -34,6 +34,10 @@ ROUNDTRIP_CASES = [
     m.PartitionDisarm(command_sequence=3, partition=1, access_code="1234"),
     m.ModuleControlActivateFAP(command_sequence=4, partition=1, fap_type=0),
     m.ModuleControlPartitionQuickExit(command_sequence=5, partition=2),
+    m.ModuleControlCommandOutput(
+        command_sequence=6, partition=1, output_number=1,
+        activation_state=1, access_code="1234",
+    ),
     m.NotificationArmDisarm(partition=1, arm_mode=2, method=0, user_id=40),
     m.NotificationPartitionReadyStatus(partition_number=1, status=1),
     m.NotificationExitDelay(partition=1, delay_flags=0x01, duration_in_seconds=60),
@@ -101,6 +105,21 @@ def test_partition_arm_body_starts_with_the_command_sequence():
         m.PartitionArm(command_sequence=0x2A, partition=1, arm_mode=2, access_code="1234")
     )
     assert body[0] == 0x2A
+
+
+def test_command_output_uses_verified_activation_layout():
+    assert m.encode_message(
+        m.ModuleControlCommandOutput(
+            command_sequence=0xAA,
+            partition=1,
+            output_number=1,
+            activation_state=1,
+            access_code="1234",
+        )
+    ) == (
+        int(Command.ModuleControl_Command_Output),
+        bytes.fromhex("AA 01 01 01 01 01 12 34"),
+    )
 
 
 def test_zone_status_bytes_survive_untouched():

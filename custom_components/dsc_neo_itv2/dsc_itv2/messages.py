@@ -2037,14 +2037,16 @@ def decode_module_control_enable_dls_window(body: bytes) -> ModuleControlEnableD
 
 @dataclass(frozen=True)
 class ModuleControlCommandOutput:
-    """[cmd_seq:1][CompactInt:Partition][CompactInt:OutputNumber][BCDString:AccessCode]
+    """[cmd_seq:1][CompactInt:Partition][CompactInt:OutputNumber]
+    [byte:ActivationState][BCDString:AccessCode]
 
-    Best-effort layout: verify with capture.
+    ``activation_state=1`` triggers the selected command output.
     """
     COMMAND = Command.ModuleControl_Command_Output
     command_sequence: int
     partition: int = 1
     output_number: int = 1
+    activation_state: int = 1
     access_code: str = ""
 
 
@@ -2053,6 +2055,7 @@ def encode_module_control_command_output(msg: ModuleControlCommandOutput) -> byt
     _s.write_u8(out, msg.command_sequence)
     _s.write_compact_int(out, msg.partition)
     _s.write_compact_int(out, msg.output_number)
+    _s.write_u8(out, msg.activation_state)
     digits = msg.access_code or ""
     if len(digits) % 2 != 0:
         digits += "0"
@@ -2064,11 +2067,13 @@ def decode_module_control_command_output(body: bytes) -> ModuleControlCommandOut
     cmd_seq, o = _s.read_u8(body, 0)
     partition, o = _s.read_compact_int(body, o)
     output_number, o = _s.read_compact_int(body, o)
+    activation_state, o = _s.read_u8(body, o)
     rest = body[o:]
     code, _o = _s.read_bcd_fixed(rest, 0, len(rest))
     return ModuleControlCommandOutput(
         command_sequence=cmd_seq, partition=partition,
-        output_number=output_number, access_code=code,
+        output_number=output_number, activation_state=activation_state,
+        access_code=code,
     )
 
 
