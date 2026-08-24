@@ -30,7 +30,7 @@ panel is offline.
 | Arming does nothing | No user PIN stored and no code supplied | Enter the code in the UI prompt, or store a user PIN in Configure |
 | `Invalid access code` in the log | Stored user PIN is not valid on the panel | Verify the PIN at the keypad; check its partition permissions |
 | Bypass switch missing for a zone | 24-hour or keyswitch zone | Expected: the panel does not allow bypassing those |
-| Command-output buttons disabled | No PGM is programmed for that output | Program the PGM in `[009]`, reload panel config, then enable the entity |
+| Command-output button missing | No matching PGM was found, or no installer code is configured | Program the PGM in `[009]`, configure the installer code, then reload panel config |
 | Command output does nothing | PGM programmed but not wired, or wrong partition | Check `[009][N]` type and `[007][N]` partition |
 | Keypads show "Installer Programming" briefly | A panel-config read is running | Expected. Only happens on demand or first setup |
 | Panel time drifts | Neo panels drift | Automate `dsc_neo_itv2.set_date_time` nightly |
