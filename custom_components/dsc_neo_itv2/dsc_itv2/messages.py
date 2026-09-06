@@ -144,7 +144,7 @@ def decode_command_error(body: bytes) -> CommandError:
 @dataclass(frozen=True)
 class OpenSession:
     """[cmd_seq:1][dev_type:1][dev_id:2][fw_version:2][proto:u16 BE]
-       [tx_buf:u16 BE][rx_buf:u16 BE][unknown:2][encryption_type:1]"""
+       [tx_buf:u16 BE][rx_buf:u16 BE][unknown:2][encryption_type:1][trailing_data:*]"""
     COMMAND = Command.Connection_Open_Session
     command_sequence: int
     device_type: int
@@ -155,6 +155,8 @@ class OpenSession:
     rx_buffer_size: int
     unknown: bytes = b"\x00\x00"
     encryption_type: int = 0
+    # Firmware 5.63 appends opaque bytes that must survive the handshake echo.
+    trailing_data: bytes = b""
 
     @property
     def firmware_major(self) -> int:
@@ -190,7 +192,7 @@ class OpenSession:
         return ((b >> 4) & 0x0F) * 10 + (b & 0x0F)
 
 
-OPEN_SESSION_BODY_SIZE: int = 15
+OPEN_SESSION_BODY_SIZE: int = 15  # Minimum size, excluding firmware extensions.
 
 
 def encode_open_session(msg: OpenSession) -> bytes:
@@ -210,6 +212,7 @@ def encode_open_session(msg: OpenSession) -> bytes:
     _s.write_u16_be(out, msg.rx_buffer_size)
     out.extend(msg.unknown)
     _s.write_u8(out, msg.encryption_type)
+    out.extend(msg.trailing_data)
     return bytes(out)
 
 
@@ -237,6 +240,7 @@ def decode_open_session(body: bytes) -> OpenSession:
         rx_buffer_size=rx,
         unknown=unk,
         encryption_type=enc,
+        trailing_data=bytes(body[OPEN_SESSION_BODY_SIZE:]),
     )
 
 

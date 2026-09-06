@@ -100,6 +100,23 @@ def test_command_error_carries_a_big_endian_command_word():
     assert body == b"\x06\x00\x03"
 
 
+@pytest.mark.parametrize("trailing_data", [b"", bytes.fromhex("02 03 02"), b"\x00\xff"])
+@pytest.mark.parametrize("encryption_type", [2, 3])
+def test_open_session_preserves_firmware_extensions(trailing_data, encryption_type):
+    body = bytes.fromhex("9a 02 00 01 05 63 02 23 04 00 04 00 00 00")
+    body += bytes([encryption_type]) + trailing_data
+    msg = m.decode_message(int(Command.Connection_Open_Session), body)
+    assert msg.encryption_type == encryption_type
+    assert msg.trailing_data == trailing_data
+    assert m.encode_message(msg) == (int(Command.Connection_Open_Session), body)
+
+
+@pytest.mark.parametrize("length", range(15))
+def test_open_session_rejects_truncated_fixed_fields(length):
+    with pytest.raises(ValueError, match="OpenSession body too short"):
+        m.decode_open_session(bytes(length))
+
+
 def test_partition_arm_body_starts_with_the_command_sequence():
     _, body = m.encode_message(
         m.PartitionArm(command_sequence=0x2A, partition=1, arm_mode=2, access_code="1234")
