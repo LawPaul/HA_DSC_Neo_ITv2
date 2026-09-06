@@ -24,6 +24,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
+    COMMAND_OUTPUT_PGM_TYPES,
     CONN_STATE_CONNECTED,
     CONN_STATE_DISCONNECTED,
     CONN_STATE_FAILED,
@@ -256,6 +257,10 @@ class DscNeoCoordinator:
         self._stop_event_unsub = None
         # Persistent storage for installer-mode-derived data.
         self._store: PanelConfigStore = PanelConfigStore(hass, entry_id)
+        # Label responses arrive asynchronously and can trail the request that
+        # triggered the panel-config save. Debounce follow-up writes so late
+        # batches are persisted without writing HA storage once per label.
+        self._label_cache_save_task: asyncio.Task | None = None
         # Set to True by async_reload_panel_config() to force the next
         # _initial_state_pull to re-enter installer mode even if cached.
         self._force_reload_config: bool = False
@@ -483,6 +488,21 @@ class DscNeoCoordinator:
         return task
 
     @callback
+    def _schedule_label_cache_save(self) -> None:
+        """Persist asynchronously received labels after a short debounce."""
+        task = self._label_cache_save_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._label_cache_save_task = self._spawn(
+            self._save_label_cache_after_delay(),
+            name="dsc-label-cache-save",
+        )
+
+    async def _save_label_cache_after_delay(self) -> None:
+        await asyncio.sleep(0.5)
+        await self._save_cache_now()
+
+    @callback
     def _update_connection_state(self, new_state: str) -> None:
         if new_state == self.connection_state:
             return
@@ -557,7 +577,22 @@ class DscNeoCoordinator:
         """True if the partition is enabled (or we don't know yet)."""
         if not self.has_panel_config:
             return True
-        return self.partition_enabled.get(partition_no, False)
+        return self.partition_enabled.get(partition_no, True)
+
+    @callback
+    def command_output_pgms(
+        self, partition_no: int, output_no: int,
+    ) -> list[tuple[int, int]]:
+        """Return PGMs programmed for a command-output slot and partition."""
+        triggering_types = COMMAND_OUTPUT_PGM_TYPES.get(output_no, frozenset())
+        matches: list[tuple[int, int]] = []
+        for pgm_no, type_code in sorted(self.pgm_types.items()):
+            if type_code not in triggering_types:
+                continue
+            assigned_partition = self.pgm_partition_assignment.get(pgm_no, 1) or 1
+            if assigned_partition == partition_no:
+                matches.append((pgm_no, type_code))
+        return matches
 
     @callback
     def zones_for_partition(self, partition_no: int) -> list[int]:
@@ -660,8 +695,8 @@ class DscNeoCoordinator:
              and partition enables. Lets us filter out disabled items.
           4. Request zone status (full range).
           5. Request partition status (each partition).
-          6. Request labels (skipped when installer-mode read succeeded;
-             that path also populates labels for free).
+          6. Request labels that are not already present in the panel-config
+             cache.
 
         Each request is throttled by REQUEST_GAP seconds to keep the
         panel's input buffer from overflowing.
@@ -735,7 +770,10 @@ class DscNeoCoordinator:
             )
 
             for partition in range(1, max_partitions + 1):
-                if self.has_panel_config and not self.partition_enabled.get(partition):
+                if (
+                    self.has_panel_config
+                    and not self.partition_enabled.get(partition, True)
+                ):
                     continue   # skip disabled partitions
                 _LOGGER.debug("Requesting partition %d status", partition)
                 await _send(
@@ -759,28 +797,55 @@ class DscNeoCoordinator:
             # for 0x0822 is still wired up in case a newer panel ever
             # pushes one unsolicited.
 
-            # Labels only needed if installer-mode read didn't supply them.
-            if not self.has_panel_config:
-                _LOGGER.debug("Requesting zone labels (1..%d)", max_zones)
-                for start in range(1, max_zones + 1, LABEL_BATCH):
-                    end = min(start + LABEL_BATCH - 1, max_zones)
-                    await _send(
-                        CommandRequestMessage(
-                            command_sequence=0,
-                            request=NotificationLabelText(
-                                collection=0xD1, start=start, end=end, labels=(),
-                            ),
+            # Repair missing labels even when installer configuration came
+            # from cache. Older/incomplete caches could contain definitions
+            # but only the first few asynchronous label responses.
+            for start in range(1, max_zones + 1, LABEL_BATCH):
+                end = min(start + LABEL_BATCH - 1, max_zones)
+                if self.has_panel_config:
+                    expected = [
+                        zone
+                        for zone in range(start, end + 1)
+                        if self.zone_definitions.get(zone, 0) != 0
+                    ]
+                    if not any(zone not in self.zone_labels for zone in expected):
+                        continue
+                _LOGGER.debug("Requesting zone labels %d-%d", start, end)
+                await _send(
+                    CommandRequestMessage(
+                        command_sequence=0,
+                        request=NotificationLabelText(
+                            collection=0xD1, start=start, end=end, labels=(),
                         ),
-                        f"zone labels {start}-{end}",
-                    )
+                    ),
+                    f"zone labels {start}-{end}",
+                )
 
-                if max_partitions:
-                    _LOGGER.debug("Requesting partition labels (1..%d)", max_partitions)
+            if max_partitions:
+                expected_partitions = (
+                    [
+                        partition
+                        for partition in range(1, max_partitions + 1)
+                        if self.partition_enabled.get(partition, True)
+                    ]
+                    if self.has_panel_config
+                    else list(range(1, max_partitions + 1))
+                )
+                if any(
+                    partition not in self.partition_labels
+                    for partition in expected_partitions
+                ):
+                    _LOGGER.debug(
+                        "Requesting partition labels (1..%d)", max_partitions,
+                    )
                     await _send(
                         CommandRequestMessage(
                             command_sequence=0,
                             request=NotificationLabelText(
-                                collection=0xD3, start=1, end=max_partitions, labels=(),
+                                collection=0xD3,
+                                start=1,
+                                end=max_partitions,
+                                labels=(),
                             ),
                         ),
                         "partition labels",
@@ -806,7 +871,7 @@ class DscNeoCoordinator:
 
         Reads:
           * [001][zone]: zone type byte (0 = NullZone)
-          * [200][partition]: partition enable byte
+          * [200][1]: enabled-partition bitmap (LSB = partition 1)
           * Zone labels: via wildcard NotificationLabelText request
             (faster than section reads and works without leaving installer mode)
           * Partition labels: same as above
@@ -868,16 +933,14 @@ class DscNeoCoordinator:
             ))
             await asyncio.sleep(0.05)
 
-        # --- Partition enables: [200][partition] ---
-        for partition in range(1, max_partitions + 1):
-            if not conn.is_open:
-                break
+        # --- Partition enables: [200][1] is one LSB-first bitmap ---
+        if conn.is_open:
             await conn.send_message(SectionRead(
                 command_sequence=0,
-                section_address=(200, partition),
+                section_address=(200, 1),
             ))
             await asyncio.sleep(0.05)
-            if partition not in self.partition_enabled:
+            if not self.partition_enabled:
                 await asyncio.sleep(0.05)
 
         # --- Partition-zone assignment bitmap: [200 + partition][byteIdx]
@@ -941,6 +1004,11 @@ class DscNeoCoordinator:
             if not conn.is_open:
                 break
             end = min(start + LABEL_BATCH - 1, max_zones)
+            if self.zone_definitions and not any(
+                self.zone_definitions.get(zone, 0) != 0
+                for zone in range(start, end + 1)
+            ):
+                continue
             await conn.send_message(CommandRequestMessage(
                 command_sequence=0,
                 request=NotificationLabelText(
@@ -1038,14 +1106,29 @@ class DscNeoCoordinator:
         self.panel_config_fetched_at = cached.fetched_at
         if self.zone_definitions or self.partition_enabled:
             self.has_panel_config = True
+        # Materialise enabled cached zones/partitions before the first panel
+        # status pull. Platforms can then create correctly named entities as
+        # soon as the config entry loads instead of waiting several seconds.
+        for zone_no, definition in self.zone_definitions.items():
+            if definition != 0:
+                self.zones[zone_no] = ZoneState(
+                    number=zone_no,
+                    label=self.zone_labels.get(zone_no),
+                )
+        for partition_no, enabled in self.partition_enabled.items():
+            if enabled:
+                self.partitions[partition_no] = PartitionState(
+                    number=partition_no,
+                    label=self.partition_labels.get(partition_no),
+                )
 
     @callback
     def async_prune_stale_entities(self) -> int:
-        """Remove entity-registry entries for zones/partitions no longer enabled.
+        """Remove entity-registry entries no longer backed by panel config.
 
         Walks every entity registered against this config entry and drops the
-        ones whose unique_id encodes a zone or partition the panel has since
-        marked disabled (zone definition == 0, or partition_enabled is False).
+        ones whose unique_id encodes a zone, partition or command output the
+        panel has since marked unavailable.
         Globals (firmware, connection, panel_time, trouble_* ...) are never
         touched. Returns the number of entries removed.
         """
@@ -1061,7 +1144,17 @@ class DscNeoCoordinator:
             parts = tail.split("_")
             zone_no: int | None = None
             partition_no: int | None = None
-            if len(parts) >= 2 and parts[0] == "zone" and parts[1].isdigit():
+            command_output_no: int | None = None
+            if (
+                len(parts) == 5
+                and parts[0] == "partition"
+                and parts[1].isdigit()
+                and parts[2:4] == ["command", "output"]
+                and parts[4].isdigit()
+            ):
+                partition_no = int(parts[1])
+                command_output_no = int(parts[4])
+            elif len(parts) >= 2 and parts[0] == "zone" and parts[1].isdigit():
                 zone_no = int(parts[1])
             elif len(parts) >= 2 and parts[0] == "partition" and parts[1].isdigit():
                 partition_no = int(parts[1])
@@ -1070,6 +1163,20 @@ class DscNeoCoordinator:
             if zone_no is not None:
                 # Only prune if the panel told us about this zone AND it's disabled.
                 if zone_no in self.zone_definitions and self.zone_definitions[zone_no] == 0:
+                    registry.async_remove(ent.entity_id)
+                    removed += 1
+            elif partition_no is not None and command_output_no is not None:
+                partition_disabled = (
+                    partition_no in self.partition_enabled
+                    and not self.partition_enabled[partition_no]
+                )
+                output_unavailable = (
+                    bool(self.installer_code and self.pgm_types)
+                    and not self.command_output_pgms(
+                        partition_no, command_output_no,
+                    )
+                )
+                if partition_disabled or output_unavailable:
                     registry.async_remove(ent.entity_id)
                     removed += 1
             elif partition_no is not None:
@@ -1319,12 +1426,13 @@ class DscNeoCoordinator:
             return
         # Known-but-uninteresting noise: silently absorb so we don't
         # spam the log with "Unhandled" warnings.
-        if isinstance(msg, (
-            NotificationChimeBroadcast,
-            NotificationBufferOverload,
-            ProgrammingLeadInOut,    # Panel announces installer-mode enter/exit
-            CommandError,            # Often arrives for partitions/sections that don't exist
-        )):
+        if isinstance(
+            msg,
+            NotificationChimeBroadcast
+            | NotificationBufferOverload
+            | ProgrammingLeadInOut
+            | CommandError,
+        ):
             return
         # Command_Response from installer-mode interactions arrives as
         # an inbound notification too: log at debug, don't spam.
@@ -1417,7 +1525,7 @@ class DscNeoCoordinator:
         """Stash zone-definition / partition-enable bytes by section address.
 
         Section [001][N]         -> zone N's type byte (0 = NullZone = disabled)
-        Section [200][N]         -> partition N's enable byte (0 = disabled)
+        Section [200][1]         -> enabled-partition bitmap (LSB = partition 1)
         Section [200+P][byteIdx] -> partition P's zone-assignment bitmap chunk
                                     (8 zones per byte, MSB-first; byteIdx is
                                     1-based).
@@ -1463,10 +1571,15 @@ class DscNeoCoordinator:
                 "Section [307][%d] = 0x%02x (zone event reporting)", index, value,
             )
         elif primary == 200 and index > 0:
-            self.partition_enabled[index] = (value != 0)
+            partition_count = min(self.max_partitions or 8, 8)
+            self.partition_enabled = {
+                partition: bool(value & (1 << (partition - 1)))
+                for partition in range(1, partition_count + 1)
+            }
             _LOGGER.debug(
-                "Section [200][%d] = 0x%02x (partition enable=%s)",
-                index, value, value != 0,
+                "Section [200][%d] = 0x%02x (enabled partitions=%s)",
+                index, value,
+                [p for p, enabled in self.partition_enabled.items() if enabled],
             )
         elif 201 <= primary <= 208 and index > 0:
             partition_no = primary - 200
@@ -1494,6 +1607,10 @@ class DscNeoCoordinator:
         if msg.arm_mode == int(ArmingMode.Disarm):
             part.is_armed = False
             part.arming_mode = int(ArmingMode.Disarm)
+            part.is_exit_delay = False
+            part.exit_delay_seconds = 0
+            part.is_entry_delay = False
+            part.entry_delay_seconds = 0
             self._fire_event(EVENT_DISARM, {
                 "partition": msg.partition,
                 "user_id": msg.user_id,
@@ -1636,19 +1753,24 @@ class DscNeoCoordinator:
     @callback
     def _update_labels(self, msg: NotificationLabelText) -> None:
         # LabelCollection: Zone = 0xD1, Partition = 0xD3, User = 0xD9
+        changed = False
         for i, label in enumerate(msg.labels):
             number = msg.start + i
             if number > msg.end:
                 break
             label_str = (label or "").rstrip()
             if msg.collection == 0xD1:    # Zone
+                changed |= self.zone_labels.get(number) != label_str
                 self.zone_labels[number] = label_str
                 if number in self.zones:
                     self.zones[number].label = label_str
                     self._send_zone_signal(number)
             elif msg.collection == 0xD3:  # Partition
+                changed |= self.partition_labels.get(number) != label_str
                 self.partition_labels[number] = label_str
                 if number in self.partitions:
                     self.partitions[number].label = label_str
                     self._send_partition_signal(number)
             # User labels ignored: no entity surface for them yet
+        if changed and self.has_panel_config:
+            self._schedule_label_cache_save()

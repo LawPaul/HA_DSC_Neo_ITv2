@@ -39,8 +39,9 @@
 
 - 24-hour and keyswitch zones get no bypass switch. The panel refuses to
   bypass them.
-- Command-output buttons for outputs with no matching PGM are created
-  disabled by default; enable them manually if you know the output is used.
+- Command-output buttons require PGM programming data from an installer-code
+  panel read for automatic filtering. Without an installer code all four
+  generic buttons remain enabled because availability cannot be inspected.
 - `sensor.<panel>_panel_time` is disabled by default because it changes
   every minute and bloats the recorder.
 - Partition sub-state binary sensors are mostly diagnostic-category and hidden

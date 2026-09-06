@@ -79,7 +79,7 @@ programming mode and reads:
 | `[001][N]` | `zone_definitions` | Zone device classes; hiding disabled zones (definition `0`) |
 | `[002][N]` | `zone_attributes_functional` / `zone_attributes_physical` | Bypassable / chime / EOL attributes |
 | `[007][N]` | `pgm_partition_assignment` | Which partition a PGM belongs to |
-| `[009][N]` | `pgm_types` | Naming the command-output buttons |
+| `[009][N]` | `pgm_types` | Discovering and naming command-output buttons |
 | `[201]`-`[208]` | `zone_partition_assignment` | Grouping zones under partitions |
 | `[307][N]` | `zone_event_reporting` | Diagnostic attributes |
 
@@ -102,7 +102,8 @@ Everything still works, with reduced fidelity:
   (`zone_labels.infer_device_class()`), then to `opening`.
 - Every zone number up to the panel's reported capability is treated as
   potentially enabled, so unused zones may appear as entities.
-- Command-output buttons are labelled generically ("Command output 1").
+- All four command-output buttons remain available with generic labels because
+  the integration cannot inspect which PGMs are programmed.
 - The **Reload panel config** button is unavailable.
 
 ## Debug logging

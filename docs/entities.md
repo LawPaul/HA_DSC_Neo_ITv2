@@ -167,7 +167,9 @@ for that partition + zone.
 
 ### Command outputs
 
-Four per enabled partition (`[*][7][1..4]`).
+With installer-code data, one per command output that has a matching programmed
+PGM on the enabled partition (`[*][7][1..4]`). Without an installer code, all
+four generic controls are exposed.
 
 | Property | Value |
 |---|---|
@@ -182,8 +184,11 @@ partition.
 - Exactly one match -> the button is named after `PGM_TYPE_NAMES[type_code]`
   (e.g. "Sensor reset", "Command output 1").
 - Multiple matches -> generic `Command output k`.
-- No matches, and a panel-config read has completed -> the entity is created but
-  **disabled by default**, since nothing is wired to it.
+- No matches -> no entity is created for that output.
+
+This filtering requires the installer-code panel read. Without an installer
+code, all four generic command-output buttons remain enabled so users can still
+trigger a known output manually.
 
 Icon: `mdi:smoke-detector-variant` for Sensor Reset (PGM type 103), otherwise
 `mdi:electric-switch`.

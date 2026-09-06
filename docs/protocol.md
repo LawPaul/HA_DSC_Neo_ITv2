@@ -300,6 +300,7 @@ Read via `Configuration_Installers_Section_Read` after
 | `[002][N]` | Zone `N` functional (byte 0) and physical (byte 1) attributes |
 | `[007][N]` | PGM `N` partition assignment |
 | `[009][N]` | PGM `N` type code (`100` = null/unassigned) |
+| `[200][1]` | Enabled-partition bitmap; bit `N-1` enables partition `N` (LSB-first) |
 | `[201]`-`[208]` | Zone -> partition assignment for partitions 1-8 |
 | `[307][N]` | Zone `N` event-reporting options |
 

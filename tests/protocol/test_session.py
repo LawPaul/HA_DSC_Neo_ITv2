@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from dsc_itv2 import itv2_framing, messages, packet, tlink_framing
 from dsc_itv2.commands import Command
 from dsc_itv2.encryption import Type1EncryptionHandler, Type2EncryptionHandler
@@ -199,6 +201,23 @@ def test_first_reply_echoes_the_command_sequence():
     decoded = messages.decode_message(reply.command, reply.body)
     assert decoded.command_sequence == 0x2A
     assert decoded.response_code == 0
+
+
+@pytest.mark.parametrize("trailing_data", [b"", bytes.fromhex("02 03 02")])
+def test_open_session_echo_preserves_firmware_extensions(trailing_data):
+    codec = SessionCodec(TYPE2_SETTINGS)
+    panel = FakePanel()
+    offer = replace(
+        open_session(2, command_sequence=0x9B),
+        firmware_version=b"\x05\x63",
+        trailing_data=trailing_data,
+    )
+    codec.feed(panel.frame(offer))
+    events = codec.feed(panel.frame(messages.SimpleAck()))
+    echo = panel.read(only_sent(events))
+    assert echo.command == int(Command.Connection_Open_Session)
+    assert echo.body == bytes([0x9C]) + messages.encode_open_session(offer)[1:]
+    assert codec.state is State.AWAITING_OPEN_SESSION_ECHO_RESPONSE
 
 
 @pytest.mark.parametrize("encryption_type", [1, 2])
