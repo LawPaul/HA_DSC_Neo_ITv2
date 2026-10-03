@@ -24,6 +24,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
+    CONF_USER_PIN,
     CONN_STATE_CONNECTED,
     CONN_STATE_DISCONNECTED,
     CONN_STATE_FAILED,
@@ -195,6 +196,7 @@ class DscNeoCoordinator:
         self.host = host
         self.port = port
         self.installer_code = installer_code or None
+        self._bypass_lock = asyncio.Lock()
 
         self.zones: dict[int, ZoneState] = {}
         self.partitions: dict[int, PartitionState] = {}
@@ -344,13 +346,36 @@ class DscNeoCoordinator:
     async def async_bypass_zone(
         self, partition: int, zone: int, bypass: bool,
     ) -> None:
+        """Write a bypass inside the normal user bypass menu ([*][1]).
+
+        The panel ignores a standalone write. Serialize menu sessions and
+        always exit the user menu; this never enters installer programming.
+        """
         from .dsc_itv2.messages import SingleZoneBypassWrite
-        conn = self._require_connected()
-        msg = SingleZoneBypassWrite(
-            command_sequence=0, partition=partition,
-            zone_number=zone, bypass_state=1 if bypass else 0,
-        )
-        await conn.send_message(msg)
+
+        entry = self.hass.config_entries.async_get_entry(self.entry_id)
+        access_code = entry.data.get(CONF_USER_PIN, "") if entry else ""
+        async with self._bypass_lock:
+            conn = self._require_connected()
+            entered = False
+            try:
+                await conn.send_message(ConfigurationEnter(
+                    command_sequence=0, partition=partition,
+                    programming_mode=int(ProgrammingMode.UserBypassProgramming),
+                    access_code=access_code or "", read_write=1,
+                ))
+                entered = True
+                await asyncio.sleep(0.2)
+                await conn.send_message(SingleZoneBypassWrite(
+                    command_sequence=0, partition=partition,
+                    zone_number=zone, bypass_state=1 if bypass else 0,
+                ))
+                await asyncio.sleep(0.2)
+            finally:
+                if entered and conn.is_open:
+                    await conn.send_message(ConfigurationExit(
+                        command_sequence=0, partition=partition,
+                    ))
 
     async def async_command_output(
         self,

@@ -12,6 +12,13 @@ resolve to a loaded DSC Neo entry.
 
 Bypass or unbypass a single zone.
 
+The integration enters the normal user bypass menu (`[*][1]`) with the stored
+user PIN before writing the bypass, then exits the menu. Configure a user PIN
+when the panel requires one for bypassing. This does not enter installer
+programming. Concurrent bypass requests are serialized so their menu sessions
+do not interleave. Bypass state remains panel-reported rather than optimistic;
+check the zone's bypass switch for confirmation.
+
 | Field | Required | Type | Notes |
 |---|---|---|---|
 | `entry_id` | yes | config entry | |
